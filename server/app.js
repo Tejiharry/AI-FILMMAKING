@@ -334,6 +334,8 @@ export function createApp(overrides = {}) {
 
   return {
     config, db, vault, providers, runner, server,
+    clientCount: () => sse.size, // open studio windows (live-update connections)
+    busy: () => db.prepare(`SELECT COUNT(*) n FROM jobs WHERE status IN ('queued','submitting','running')`).get().n > 0,
     listen() { return new Promise((resolve) => server.listen(config.port, config.host, () => { runner.start(); resolve(server.address()); })); },
     async close() { runner.stop(); engine.stop(); for (const s of sse) s.end(); await new Promise((r2) => server.close(r2)); server.closeAllConnections?.(); db.close(); },
   };

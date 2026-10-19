@@ -24,7 +24,8 @@ export function loadConfig(overrides = {}) {
     jobTimeoutMs: overrides.jobTimeoutMs ?? Number(process.env.STUDIO_JOB_TIMEOUT_MS ?? 45 * 60 * 1000),
     maxRetries: overrides.maxRetries ?? 3,
     // Upload cap (bytes).
-    maxUploadBytes: overrides.maxUploadBytes ?? 2 * 1024 ** 3,
+    // Camera originals (.mov/.mxf) can be large; uploads stream to disk, so the cap is about disk space.
+    maxUploadBytes: overrides.maxUploadBytes ?? 50 * 1024 ** 3,
     mockDelayMs: overrides.mockDelayMs ?? Number(process.env.STUDIO_MOCK_DELAY_MS ?? 4000),
   };
 }

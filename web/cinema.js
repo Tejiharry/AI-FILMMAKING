@@ -150,6 +150,7 @@ export function buildComposer(ui, ctx) {
 
   // ---- live plan / cost
   let planTimer, lastPlan = null;
+  const fullPrompt = h('pre', { class: 'prompt-preview' }, '…');
   function refreshPlan() {
     clearTimeout(planTimer);
     planTimer = setTimeout(async () => {
@@ -160,6 +161,7 @@ export function buildComposer(ui, ctx) {
         genBtn.lastChild.textContent = lastPlan.errors.length ? `${lastPlan.errors.length} issue${lastPlan.errors.length > 1 ? 's' : ''}` : each ? `${usd(each * takes)} est.${takes > 1 ? ` (${takes}×)` : ''}` : `free${prov().id === 'local-h3' ? ' · local GPU' : ''}`;
         genBtn.disabled = !!lastPlan.errors.length;
         issues.replaceChildren(...lastPlan.errors.map((e) => h('div', {}, '⛔ ', e)), ...lastPlan.warnings.map((w) => h('div', { class: 'warnc' }, '⚠ ', w)));
+        fullPrompt.textContent = lastPlan.prompt || '(empty — describe the shot above)';
         onPlan?.(lastPlan);
       } catch (e) { genBtn.lastChild.textContent = 'plan error'; issues.textContent = e.message; }
     }, 450);
@@ -284,6 +286,15 @@ export function buildComposer(ui, ctx) {
         h('p', { class: 'muted' }, 'Palettes guide the generation; final grade belongs in Resolve. QC measures drift against references.'));
     } }], ['look.palette', 'look.grade_notes']);
   }
+  // Uploading closes this dialog, so the new item is attached to the shot directly and the dialog reopens.
+  const refUpload = { purpose: 'character', title: 'Upload a character / reference image', onDone: guard(async (_d, ref) => {
+    if (!ref) return; refs.push(ref);
+    if (ref.type === 'location') spec.location = ref.handle; else spec.subjects = [...(spec.subjects ?? []), { ref: ref.handle }];
+    await save(); rerender(); refsModal(); }) };
+  const mediaUpload = { title: 'Upload frames or reference media', onDone: guard(async (done) => {
+    for (const a of done) { if (!assets.some((x) => x.id === a.id)) assets.push(a); (spec.references ??= []).push({ role: a.kind === 'video' ? 'reference_video' : a.kind === 'audio' ? 'reference_audio' : 'reference_image', asset_id: a.id }); }
+    await save(); rerender(); refsModal(); }) };
+  const uploadRef = () => ui.openUpload(refUpload), uploadMedia = () => ui.openUpload(mediaUpload);
   function refsModal() {
     const media = assets.filter((a) => ['image', 'video', 'audio'].includes(a.kind));
     settingsModal(`References (${refCount()} / ${refLimit() || '—'})`, [
@@ -293,13 +304,14 @@ export function buildComposer(ui, ctx) {
             if (ref.type === 'location') d.location = on ? '' : ref.handle;
             else d.subjects = on ? (d.subjects ?? []).filter((s) => s.ref !== ref.handle) : [...(d.subjects ?? []), { ref: ref.handle }];
             r(); } }, ref.asset_ids?.[0] ? ui.thumbFor(ref.asset_ids[0]) : h('div', { class: 'thumb' }), h('b', {}, ref.handle), h('small', {}, `${ref.type} · ${ref.description || ref.name}`)); }))
-          : h('div', { class: 'empty' }, 'No references yet — create them in Reference Studio.')) },
+          : h('div', { class: 'empty' }, 'No references yet — upload a character photo below.'),
+        h('div', { class: 'row', style: 'margin-top:10px' }, h('button', { class: 'primary', onclick: uploadRef }, '⬆ Upload character / reference photo…'), h('span', { class: 'muted', style: 'font-size:12px' }, 'or drop an image anywhere on the page'))) },
       { id: 'inputs', label: 'Frames & media', render: (d, r) => h('div', {}, h('p', { class: 'muted' }, 'First/last frames lock the storyboard; reference media lock identity/motion. Some models cannot mix the two.'),
         ...(d.references ?? []).map((x, i) => h('div', { class: 'grid g3', style: 'margin-bottom:6px' },
           h('select', { onchange: (e) => { x.role = e.target.value; } }, ['first_frame', 'last_frame', 'reference_image', 'reference_video', 'reference_audio'].map((v) => h('option', { selected: x.role === v }, v))),
           h('select', { onchange: (e) => { x.asset_id = e.target.value; } }, media.map((a) => h('option', { value: a.id, selected: a.id === x.asset_id }, `${a.kind}: ${a.filename}`))),
           h('button', { class: 'danger', onclick: () => { d.references.splice(i, 1); r(); } }, 'Remove'))),
-        h('button', { disabled: !media.length, onclick: () => { (d.references ??= []).push({ role: 'reference_image', asset_id: media[0].id }); r(); } }, '+ Add frame / media')) },
+        h('div', { class: 'row' }, h('button', { disabled: !media.length, onclick: () => { (d.references ??= []).push({ role: 'reference_image', asset_id: media[0].id }); r(); } }, '+ Add from library'), h('button', { class: 'primary', onclick: uploadMedia }, '⬆ Upload frame / media…'))) },
     ], ['subjects', 'references', 'location']);
   }
 
@@ -307,6 +319,8 @@ export function buildComposer(ui, ctx) {
   const tileHost = h('div');
   const redrawTiles = () => tileHost.replaceChildren(tiles());
   redrawTiles(); drawChips(); refreshPlan();
-  const el = h('div', { class: 'composer' }, tileHost, h('div', { class: 'prompt-box' }, ta, menu), chipbar, issues);
-  return { el, providerId, getPlan: () => lastPlan, refreshPlan };
+  const el = h('div', { class: 'composer' }, tileHost, h('div', { class: 'prompt-label' }, 'Prompt → your shot description', h('span', {}, 'type @ for characters · the tiles above add camera, light and look')), h('div', { class: 'prompt-box' }, ta, menu),
+    h('details', { class: 'prompt-details' }, h('summary', {}, 'Show the full prompt sent to the model'), fullPrompt), chipbar, issues);
+  // dropUpload: what a page-wide drop means here — a photo becomes a character on this shot, anything else a reference input.
+  return { el, providerId, getPlan: () => lastPlan, refreshPlan, dropUpload: (images) => (images ? refUpload : mediaUpload) };
 }

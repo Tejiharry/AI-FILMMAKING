@@ -123,13 +123,23 @@ export function registerExtendedRoutes(r, ctx) {
   });
   r.get('/api/assets/:id/analyses', ({ id }) => all('SELECT * FROM analyses WHERE asset_id = ? ORDER BY created_at DESC', id));
   r.get('/api/transforms', () => TRANSFORMS);
-  r.post('/api/projects/:id/transform', ({ id }, _q, b) => {
+  // Plans for a transform request. b.prompt (single-shot transforms only) replaces the automatic instruction.
+  const transformPlans = (id, b) => {
     must(one('SELECT id FROM projects WHERE id = ?', id), 'project');
     const source = must(one('SELECT * FROM assets WHERE id = ? AND project_id = ?', b.source_asset_id, id), 'source asset');
     if (source.kind !== 'video') throw httpError(400, 'source must be a video');
     const analysis = b.analysis_id ? one('SELECT * FROM analyses WHERE id = ?', b.analysis_id)?.result : null;
     const swapRefs = (b.ref_handles ?? []).map((h) => must(one('SELECT * FROM refs WHERE project_id = ? AND handle = ?', id, h), `reference ${h}`));
     const plans = planTransform(b.type, { analysis, source, brief: b.brief, swapRefs, target: b.target, replacement: b.replacement, direction: b.direction, extendSeconds: b.extend_seconds, aspect: b.aspect, scope: b.scope === 'face' ? 'face' : 'character' });
+    if (typeof b.prompt === 'string' && b.prompt.trim() && plans.length === 1) plans[0].spec.intent = { ...plans[0].spec.intent, summary: b.prompt.trim(), edited: true };
+    return { source, analysis, plans };
+  };
+  r.post('/api/projects/:id/transform/preview', ({ id }, _q, b) => {
+    const { plans } = transformPlans(id, b);
+    return { shots: plans.map((p) => ({ title: p.title, prompt: p.spec.intent?.summary ?? '' })) };
+  });
+  r.post('/api/projects/:id/transform', ({ id }, _q, b) => {
+    const { source, analysis, plans } = transformPlans(id, b);
     // A transform becomes its own scene so the original material is never touched.
     const sid = uid(), t = now();
     const idx = (db.prepare('SELECT MAX(idx) m FROM scenes WHERE project_id = ?').get(id).m ?? 0) + 1;

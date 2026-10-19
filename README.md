@@ -24,11 +24,24 @@ Independent implementation from public information and official API docs — no 
 - Node.js ≥ 24 (tested on 26.8). **No npm install needed** — zero runtime dependencies.
 - ffmpeg + ffprobe on PATH, or inside WSL (auto-detected on Windows).
 
-## Run
+## Run as a Windows app
+Double-click the **Harry AI FILM STUDIO** shortcut (desktop / Start menu), which runs `app/launch.ps1`:
+it starts the studio hidden in the background (`STUDIO_APP_MODE=1`) and opens it in its own Edge app window
+(no address bar, own taskbar icon). Close the window and the studio shuts itself down about a minute later,
+unless a generation is still running. Logs: `data/studio.log`, `data/studio-error.log`.
+`Start Harry AI FILM STUDIO.cmd` runs it in a visible console for debugging.
+
+Shortcut target: `powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "<repo>applaunch.ps1"` (icon `app/studio.ico`).
+
+## Run from a terminal
 ```bash
 npm start
 ```
 Open http://127.0.0.1:4517. Data lives in `./data` (database, media, encryption key — gitignored).
+
+Drag files anywhere onto the window to add them: each page decides what they are for (OG Genjutsu: a video becomes the
+source, a photo becomes the replacement character; OG Cinema Studio: a photo becomes a character on the shot). Every mode
+shows a labelled **Prompt → sent to the model** box, and OG Cinema Studio shows the full compiled prompt before you generate.
 
 | Env var | Default | Purpose |
 |---|---|---|

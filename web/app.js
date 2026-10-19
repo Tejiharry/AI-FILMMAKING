@@ -1,4 +1,5 @@
 import { buildComposer } from './cinema.js';
+import { openUpload, installGlobalDrop } from './upload.js';
 // Harry AI FILM STUDIO — single-page client. No framework: a tiny h() helper,
 // one render function per view, all state fetched from the local API.
 const $ = (s, el = document) => el.querySelector(s);
@@ -87,6 +88,7 @@ main.addEventListener('input', () => { state.dirty = true; });
 main.addEventListener('change', () => { state.dirty = true; });
 async function render() {
   state.dirty = false;
+  state.dropContext = null; // each view sets its own
   for (const a of document.querySelectorAll('#nav a')) a.classList.toggle('active', a.dataset.view === state.view);
   main.replaceChildren(h('p', { class: 'muted' }, 'Loading…'));
   try { await (VIEWS[state.view] ?? VIEWS.projects)(); } catch (e) { main.replaceChildren(h('h1', {}, 'Something went wrong'), h('pre', {}, e.message)); }
@@ -167,6 +169,10 @@ function batchApproval(jobs) {
       h('button', { class: 'primary', onclick: guard(async () => { const r = await POST('/api/jobs/approve-batch', { job_ids: jobs.map((j) => j.id), confirm_usd_total: Number(inp.value) }); closeModal(); toast(`Approved ${r.results.filter((x) => x.ok).length}/${jobs.length}`, 'ok'); render(); }) }, `Approve ${usd(total)}`))));
 }
 const UI = { h, GET, POST, PATCH, toast, guard, usd, modal, closeModal, thumbFor, approvalDialog, batchApproval };
+UI.openUpload = (opts) => openUpload(UI, { projectId: state.projectId, ...opts });
+// Views set state.dropContext(files) → { purpose, onDone, title } to say what a page-wide drop means there.
+const allImages = (files) => files.length && files.every((f) => f.type.startsWith('image/') || /\.(png|jpe?g|webp|tiff?|heic|bmp)$/i.test(f.name));
+function defaultDrop() { return { onDone: () => { toast('Added to the Asset Library', 'ok'); if (['assets', 'projects'].includes(state.view)) render(); } }; }
 
 // ------------------------------------------------------------------ VIEWS
 const VIEWS = {};
@@ -413,6 +419,7 @@ VIEWS.cinema = async () => {
   composer = buildComposer(UI, { shot, spec, E, refs, assets, V, providers: state.providers, save, rerender: render,
     onPlan: (pl) => { if (paneTab === 'plan') pane.replaceChildren(planView(pl)); },
     onProvider: (v) => { state.urlProvider = v; writeUrl(); } });
+  state.dropContext = (files) => composer.dropUpload(allImages(files));
 
   // Right pane: Takes (list/grid + size) | Plan | How it works
   let paneTab = 'takes';
@@ -507,9 +514,13 @@ VIEWS.references = async () => {
   const name = h('input', { placeholder: 'Name (e.g. Mira)' }), type = h('select', {}, TYPES.map((t) => h('option', {}, t))), desc = h('textarea', { placeholder: 'Description used in prompts: age, build, hair, signature wardrobe… (be specific and stable)' });
   const pick = h('select', { multiple: true, size: 6 }, assets.filter((a) => a.kind !== 'other').map((a) => h('option', { value: a.id }, `${a.kind}: ${a.filename}`)));
   const consent = h('input', { type: 'checkbox' });
+  const uploadRef = (files) => UI.openUpload({ files, purpose: 'character', title: 'Upload a reference image', onDone: () => render() });
+  state.dropContext = (files) => (allImages(files) ? { purpose: 'character', title: 'Upload a reference image', onDone: () => render() } : null);
   main.replaceChildren(h('h1', {}, 'Reference Studio'), h('p', { class: 'sub' }, 'Reusable references for characters, wardrobe, props, locations and look. Use their @handle in any shot; shots inherit them.'),
     h('div', { class: 'split' },
-      h('div', { class: 'panel' }, h('h3', {}, 'New reference'), h('div', { class: 'grid' }, name, type, desc, h('label', {}, 'Attach media (Ctrl-click for several)', pick),
+      h('div', { class: 'panel' }, h('h3', { style: 'margin-top:0' }, 'Upload a photo'),
+        dropPanel('Drop a character / prop / location photo here — or click to browse', 'JPG / PNG / WebP — creates the reference in one step (rights + consent recorded)', uploadRef, { accept: 'image/*' }),
+        h('h3', {}, 'Or build one from library media'), h('div', { class: 'grid' }, name, type, desc, h('label', {}, 'Attach media (Ctrl-click for several)', pick),
         h('label', { class: 'inline' }, consent, 'Real person: I hold written likeness consent'),
         h('button', { class: 'primary', onclick: guard(async () => {
           await POST(`/api/projects/${p.id}/refs`, { name: name.value, type: type.value, description: desc.value, asset_ids: [...pick.selectedOptions].map((o) => o.value), consent: consent.checked ? { likeness_consent: true, recorded_at: new Date().toISOString() } : {} });
@@ -523,7 +534,7 @@ VIEWS.references = async () => {
         h('div', { class: 'row', style: 'margin-top:6px' },
           h('button', { onclick: guard(async () => { const d = prompt('Description', r.description); if (d == null) return; await PATCH(`/api/refs/${r.id}`, { description: d }); render(); }) }, 'Edit'),
           h('button', { class: 'danger', onclick: guard(async () => { if (!confirm(`Delete reference ${r.handle}? Media stays in the library.`)) return; await DEL(`/api/refs/${r.id}`); render(); }) }, 'Delete')))))))
-        : emptySteps([['Upload stills', 'Add character, prop or location images in the Asset Library (rights + consent).'], ['Create a reference', 'Name it, write a stable visual description, attach the images.'], ['Use @name', 'Type @ in OG Cinema Studio; swaps in OG Genjutsu pick from here too.']]))));
+        : emptySteps([['Upload a photo', 'Drop a character, prop or location image on the left (rights + consent recorded).'], ['Create a reference', 'Name it, write a stable visual description, attach the images.'], ['Use @name', 'Type @ in OG Cinema Studio; swaps in OG Genjutsu pick from here too.']]))));
 };
 
 // --- OG Katana (reference-driven) & OG Genjutsu (swaps) ---------------------------
@@ -556,30 +567,21 @@ async function transformStudio(kind) {
   // ---- left column pieces
   const modeHost = h('div');
   const drawModes = () => modeHost.replaceChildren(h('div', { class: 'optgrid', style: 'grid-template-columns:repeat(auto-fill,minmax(170px,1fr))' },
-    Object.entries(transforms).map(([k, v]) => h('div', { class: `ocard ${k === mode ? 'on' : ''}`, onclick: () => { mode = k; state[modeKey] = k; writeUrl(); drawModes(); drawExtras(); planBtn.lastChild.textContent = `Plan ${v.label}`; } },
+    Object.entries(transforms).map(([k, v]) => h('div', { class: `ocard ${k === mode ? 'on' : ''}`, onclick: () => { mode = k; state[modeKey] = k; writeUrl(); promptEdited = false; drawModes(); drawExtras(); planBtn.lastChild.textContent = `Plan ${v.label}`; } },
       h('b', {}, v.label), h('small', {}, v.classification)))), h('p', { class: 'muted', style: 'font-size:12.5px' }, transforms[mode].note));
   const srcHost = h('div');
-  const rights = h('input', { type: 'checkbox' });
   const drawSource = () => {
     const a = assets.find((x) => x.id === srcId);
-    const zone = h('label', { class: `dropzone ${a ? 'filled' : ''}` },
-      a ? h('div', { class: 'row', style: 'flex-wrap:nowrap' }, h('div', { style: 'width:120px;flex:none' }, thumbFor(a.id)),
-        h('div', {}, h('b', {}, a.filename), h('div', { class: 'muted', style: 'font-size:12px' }, `${a.meta?.duration_s?.toFixed(1) ?? '?'} s · ${a.meta?.video?.fps ?? '?'} fps · ${a.meta?.video?.width ?? '?'}×${a.meta?.video?.height ?? '?'}`),
-          h('a', { onclick: (e) => { e.preventDefault(); pickSource(); } }, 'Change')))
-        : h('span', {}, 'Drop a source video here, or click to choose'),
-      h('span', { class: 'lim' }, kind === 'genjutsu' ? 'Local H3 swap: 2–15 s · Seedance edit: 4–30 s · converted to 24 fps' : 'Reference clip: any length for analysis · up to 30 s per generation'));
-    zone.onclick = (e) => { if (!a) { e.preventDefault(); pickSource(); } };
-    zone.ondragover = (e) => { e.preventDefault(); zone.classList.add('over'); };
-    zone.ondragleave = () => zone.classList.remove('over');
-    zone.ondrop = guard(async (e) => {
-      e.preventDefault(); zone.classList.remove('over');
-      const file = e.dataTransfer.files[0]; if (!file) return;
-      if (!rights.checked) throw new Error('Tick "I have the rights to use this clip" first.');
-      const q = new URLSearchParams({ filename: file.name, rights_confirmed: '1' });
-      const r = await api('PUT', `/api/projects/${p.id}/assets?${q}`, file, true);
-      state.motionSrc = r.asset.id; render();
-    });
-    srcHost.replaceChildren(zone, h('label', { class: 'inline', style: 'margin-top:6px' }, rights, 'I have the rights to use this clip (for drag-and-drop uploads)'));
+    const limits = kind === 'genjutsu' ? 'Local H3 swap: 2–15 s · Seedance edit: 4–30 s · converted to 24 fps' : 'Reference clip: any length for analysis · up to 30 s per generation';
+    const uploadSource = (files) => UI.openUpload({ files, accept: 'video/*,.mov,.mxf', title: 'Upload source video',
+      onDone: (done) => useUploadedSource(done) });
+    srcHost.replaceChildren(a
+      ? h('div', { class: 'dropzone filled' }, h('div', { class: 'row', style: 'flex-wrap:nowrap' }, h('div', { style: 'width:120px;flex:none' }, thumbFor(a.id)),
+          h('div', {}, h('b', {}, a.filename), h('div', { class: 'muted', style: 'font-size:12px' }, `${a.meta?.duration_s?.toFixed(1) ?? '?'} s · ${a.meta?.video?.fps ?? '?'} fps · ${a.meta?.video?.width ?? '?'}×${a.meta?.video?.height ?? '?'}`),
+            h('div', { class: 'row', style: 'margin-top:6px' }, h('button', { onclick: () => pickSource() }, 'Choose another from library'), h('button', { onclick: () => uploadSource([]) }, 'Upload a different clip…')))),
+          h('span', { class: 'lim' }, limits))
+      : h('div', {}, dropPanel('Drop your source video here — or click to browse', limits, uploadSource, { accept: 'video/*,.mov,.mxf' }),
+          assets.length ? h('a', { style: 'display:inline-block;margin-top:6px', onclick: () => pickSource() }, 'or choose a video already in the library') : null));
   };
   const pickSource = () => modal(h('div', {}, h('h1', {}, 'Choose source video'),
     assets.length ? h('div', { class: 'optgrid' }, assets.map((a) => h('div', { class: `ocard ${a.id === srcId ? 'on' : ''}`, onclick: () => { srcId = a.id; state.motionSrc = a.id; writeUrl(); analysis = null; closeModal(); drawSource(); drawExtras(); } },
@@ -588,7 +590,50 @@ async function transformStudio(kind) {
 
   const extras = h('div');
   const out = h('div');
+  // Character / reference upload → creates the Reference Studio entry and selects it here.
+  const uploadCharacter = (files) => UI.openUpload({ files, purpose: 'character', title: mode === 'character_swap' ? 'Upload the replacement character' : 'Upload a reference image',
+    onDone: (_done, ref) => { if (!ref) return; refs.push(ref); if (mode === 'character_swap') chosen.clear(); chosen.add(ref.handle); drawExtras(); refreshPrompt(); } });
+  // Page-wide drops here: a video becomes the source, a photo becomes the character/reference.
+  state.dropContext = (files) => (allImages(files)
+    ? { purpose: 'character', title: 'Upload the replacement character', onDone: (_d, ref) => { if (ref) { refs.push(ref); if (mode === 'character_swap') chosen.clear(); chosen.add(ref.handle); drawExtras(); refreshPrompt(); } } }
+    : { accept: 'video/*,.mov,.mxf', title: 'Upload source video', onDone: (done) => useUploadedSource(done) });
+  function useUploadedSource(done) {
+    const v = done.find((x) => x.kind === 'video');
+    if (!v) return toast('That was not a video — the source must be a video clip.', 'err');
+    if (!assets.some((x) => x.id === v.id)) assets.unshift(v);
+    srcId = v.id; state.motionSrc = v.id; analysis = null; writeUrl();
+    toast(`Source: ${v.filename}`, 'ok'); drawSource(); drawExtras();
+  }
+
+  // ---- Prompt box: the exact text that goes to the model (automatic from the inputs, editable).
+  const promptTa = h('textarea', { style: 'min-height:110px' });
+  const promptNote = h('span', {}, 'automatic — built from your choices');
+  let promptEdited = false;
+  promptTa.addEventListener('input', () => { promptEdited = true; promptNote.textContent = 'edited by you — sent exactly as written'; });
+  const promptBox = h('div', { style: 'margin-top:12px' },
+    h('div', { class: 'prompt-label' }, 'Prompt → sent to the model as its instruction', promptNote), promptTa,
+    h('div', { class: 'row', style: 'margin-top:4px;justify-content:space-between' },
+      h('span', { class: 'muted', style: 'font-size:11.5px' }, '@names become the model’s image/video slots (<Picture 1>, <Video 1>). Camera/style lines are added from the shot; OG Cinema Studio shows the full final prompt before you generate.'),
+      h('a', { onclick: () => { promptEdited = false; promptNote.textContent = 'automatic — built from your choices'; refreshPrompt(); } }, 'Reset to automatic')),
+    h('label', { style: 'margin-top:8px' }, kind === 'katana' ? 'Brief (added to every recreated shot)' : 'Extra instructions (optional, added to the prompt)', brief));
+  let promptTimer;
+  const refreshPrompt = () => {
+    if (promptEdited) return;
+    clearTimeout(promptTimer);
+    promptTimer = setTimeout(async () => {
+      if (!srcId) { promptTa.value = ''; promptTa.placeholder = 'Choose a source video first — the prompt is built from it.'; return; }
+      try {
+        const r = await POST(`/api/projects/${p.id}/transform/preview`, { type: mode, source_asset_id: srcId, analysis_id: analysis?.id, brief: brief.value, target: target.value, ref_handles: [...chosen], scope: swapScope });
+        promptTa.value = r.shots[0]?.prompt ?? '';
+        promptTa.readOnly = r.shots.length > 1;
+        promptNote.textContent = r.shots.length > 1 ? `automatic — shot 1 of ${r.shots.length} shown; each shot gets its own` : 'automatic — built from your choices';
+      } catch (e) { promptTa.value = ''; promptTa.placeholder = e.message; }
+    }, 300);
+  };
+  for (const el of [brief, target]) el.addEventListener('input', refreshPrompt);
+
   const drawExtras = () => {
+    refreshPrompt();
     const needsRefs = ['character_swap', 'motion_transfer', 'object_swap', 'recreate'].includes(mode);
     extras.replaceChildren(...[ // replaceChildren() would print null/false as text — filter first
       ['character_swap', 'object_swap'].includes(mode) ? h('label', {}, 'Replace', target) : null,
@@ -599,13 +644,14 @@ async function transformStudio(kind) {
         refs.length ? h('div', { class: 'optgrid', style: 'grid-template-columns:repeat(auto-fill,minmax(110px,1fr))' }, refs.filter((r) => mode !== 'character_swap' || ['character', 'wardrobe', 'prop'].includes(r.type)).map((r) => h('div', { class: `ocard ${chosen.has(r.handle) ? 'on' : ''}`, onclick: () => {
           if (mode === 'character_swap') { const on = chosen.has(r.handle); chosen.clear(); if (!on) chosen.add(r.handle); } else if (chosen.has(r.handle)) chosen.delete(r.handle); else chosen.add(r.handle);
           drawExtras(); } }, r.asset_ids?.[0] ? thumbFor(r.asset_ids[0]) : h('div', { class: 'thumb' }), h('b', { style: 'font-size:12px' }, r.handle), h('small', {}, r.type))))
-          : h('p', { class: 'muted' }, 'No references yet — add the character image in Reference Studio (consent is recorded there).'),
-        h('a', { onclick: () => go('references') }, '+ New reference in Reference Studio')) : null,
-      h('label', { style: 'margin-top:8px' }, 'Brief', brief),
+          : dropPanel(mode === 'character_swap' ? 'Drop the character photo here — or click to browse' : 'Drop a reference image here — or click to browse', 'JPG / PNG — becomes a Reference Studio entry (consent recorded)', (files) => uploadCharacter(files), { accept: 'image/*' }),
+        refs.length ? h('button', { style: 'margin-top:8px', onclick: () => uploadCharacter([]) }, mode === 'character_swap' ? '⬆ Upload a character photo…' : '⬆ Upload a reference image…') : null) : null,
+      promptBox,
       cfg.analyse ? h('button', { style: 'margin-top:8px', onclick: guard(async () => {
         if (!srcId) throw new Error('Choose a source video first.');
         out.replaceChildren(h('p', { class: 'muted' }, 'Analysing…'));
         analysis = await POST(`/api/assets/${srcId}/analyze`, {});
+        refreshPrompt();
         const st = analysis.soundtrack, ca = analysis.cut_alignment;
         out.replaceChildren(h('div', { class: 'panel' }, h('h3', {}, 'Edit rhythm'),
           h('div', { class: 'kv' }, h('div', {}, 'Shots'), h('div', {}, analysis.edit_rhythm.shot_count), h('div', {}, 'Average shot'), h('div', {}, `${analysis.edit_rhythm.average_shot_s}s`), h('div', {}, 'Cuts / min'), h('div', {}, analysis.edit_rhythm.cuts_per_minute), h('div', {}, 'Pacing'), h('div', {}, analysis.edit_rhythm.pacing),
@@ -626,7 +672,7 @@ async function transformStudio(kind) {
     if (!srcId) throw new Error('Choose a source video first.');
     if (mode === 'recreate' && !analysis) throw new Error('Run "Analyse shots & timing" first — recreation is planned per detected shot.');
     if (mode === 'character_swap' && !chosen.size) throw new Error('Pick the replacement character.');
-    const r = await POST(`/api/projects/${p.id}/transform`, { type: mode, source_asset_id: srcId, analysis_id: analysis?.id, brief: brief.value, target: target.value, ref_handles: [...chosen], scope: swapScope });
+    const r = await POST(`/api/projects/${p.id}/transform`, { type: mode, source_asset_id: srcId, analysis_id: analysis?.id, brief: brief.value, target: target.value, ref_handles: [...chosen], scope: swapScope, prompt: promptEdited ? promptTa.value : undefined });
     toast(`${r.shots.length} shot(s) planned — open it in OG Cinema Studio to generate`, 'ok');
     go('cinema', { shotId: r.shots[0].id });
   }) }, `Plan ${transforms[mode]?.label ?? 'transformation'}`);
@@ -792,7 +838,7 @@ function upscaleDialog(assetId) {
 }
 function reviseDialog(revShot, revNote) {
   modal(h('div', {}, h('h1', {}, 'Revise a shot'), h('p', { class: 'sub' }, 'A new version is generated from the shot with your change; earlier takes stay available (Regenerations).'),
-    h('label', {}, 'Shot', revShot), h('label', { style: 'margin-top:8px' }, 'What to change', revNote),
+    h('label', {}, 'Shot', revShot), h('div', { class: 'prompt-label', style: 'margin-top:8px' }, 'What to change → added to the shot’s prompt', h('span', {}, 'the new version is generated from the revised prompt')), revNote,
     h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:12px' }, h('button', { onclick: closeModal }, 'Cancel'),
       h('button', { class: 'primary', onclick: guard(async () => {
         const r = await POST(`/api/shots/${revShot.value}/revise`, { note: revNote.value, changes: revNote.value ? { intent: { action: revNote.value } } : {} });
@@ -806,24 +852,8 @@ VIEWS.assets = async () => {
   if (needProject()) return;
   const p = state.project;
   const assets = await GET(`/api/projects/${p.id}/assets`);
-  const rights = h('input', { type: 'checkbox' }), person = h('input', { type: 'checkbox' }), consent = h('input', { type: 'checkbox' });
-  const tags = h('input', { placeholder: 'tags, comma separated' });
-  const fileIn = h('input', { type: 'file', multiple: true, accept: 'video/*,image/*,audio/*' });
-  const drop = h('div', { class: 'drop' }, 'Drop media here or ', fileIn);
-  const doUpload = guard(async (files) => {
-    if (!rights.checked) throw new Error('Confirm you have the rights to use this media first.');
-    for (const f of files) {
-      toast(`Uploading ${f.name}…`);
-      const q = new URLSearchParams({ filename: f.name, rights_confirmed: '1', depicts_real_person: person.checked ? '1' : '0', likeness_consent: consent.checked ? '1' : '0', tags: tags.value });
-      const r = await api('PUT', `/api/projects/${p.id}/assets?${q}`, f, true);
-      toast(r.duplicate ? `${f.name}: already in library` : `${f.name} uploaded`, 'ok');
-    }
-    render();
-  });
-  fileIn.onchange = () => doUpload([...fileIn.files]);
-  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
-  drop.ondragleave = () => drop.classList.remove('over');
-  drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); doUpload([...e.dataTransfer.files]); };
+  const uploadPanel = dropPanel('Drop footage, stills or audio here — or click to browse', 'Video (MOV, MP4, MXF…), images, audio · up to 50 GB · copied into this project on your PC',
+    (files) => UI.openUpload({ files, onDone: () => render() }));
   const filter = state.assetFilter ?? 'all';
   const layout = state.assetLayout ?? 'grid';
   const sort = state.assetSort ?? 'new';
@@ -849,8 +879,7 @@ VIEWS.assets = async () => {
       h('b', { style: 'font-size:12.5px;word-break:break-all' }, a.filename),
       h('div', { class: 'meta' }, ...badges(a), ' ', a.meta?.duration_s ? `${a.meta.duration_s.toFixed(1)}s` : '')))));
   main.replaceChildren(h('h1', {}, 'Asset Library'), h('p', { class: 'sub' }, 'Uploads, generated takes and derived frames. Files stay local; nothing is published.'),
-    h('div', { class: 'panel', style: 'margin-bottom:14px' }, drop, h('div', { class: 'row', style: 'margin-top:10px' },
-      h('label', { class: 'inline' }, rights, 'I have the rights to use this media'), h('label', { class: 'inline' }, person, 'Shows a real person'), h('label', { class: 'inline' }, consent, 'Likeness consent on file'), tags)),
+    h('div', { style: 'margin-bottom:14px' }, uploadPanel),
     previzPanel(p),
     h('div', { class: 'tabs' }, ['all', 'video', 'image', 'audio', 'upload', 'generated', 'derived'].map((f) => h('button', { class: f === filter ? 'on' : '', onclick: () => { state.assetFilter = f; render(); } }, f))),
     h('div', { class: 'row', style: 'margin-bottom:10px' }, search,
@@ -859,6 +888,17 @@ VIEWS.assets = async () => {
       layout === 'grid' ? h('input', { type: 'range', min: 140, max: 360, value: size, style: 'width:130px', title: 'thumbnail size', oninput: (e) => { localStorage.setItem('assetTile', e.target.value); listHost.firstChild?.style?.setProperty('--tile', `${e.target.value}px`); } }) : null,
       h('span', { class: 'muted' }, `${shown.length} of ${assets.length}`)),
     listHost);
+}
+
+// A drop zone that is also a Browse button; files go to the shared upload dialog (rights/consent + progress).
+function dropPanel(text, limits, onFiles, { accept } = {}) {
+  const picker = h('input', { type: 'file', multiple: true, accept: accept ?? 'video/*,image/*,audio/*,.mov,.mxf', style: 'display:none', onchange: () => { if (picker.files.length) onFiles([...picker.files]); picker.value = ''; } });
+  const zone = h('div', { class: 'dropzone', style: 'padding:22px', onclick: () => picker.click() },
+    h('div', { style: 'font-size:15px;color:var(--text)' }, '⬆ ', text), h('span', { class: 'lim' }, limits), h('button', { class: 'primary', style: 'margin-top:10px', onclick: (e) => { e.stopPropagation(); picker.click(); } }, 'Browse…'), picker);
+  zone.ondragover = (e) => { e.preventDefault(); zone.classList.add('over'); };
+  zone.ondragleave = () => zone.classList.remove('over');
+  zone.ondrop = (e) => { e.preventDefault(); e.stopPropagation(); zone.classList.remove('over'); onFiles([...e.dataTransfer.files]); };
+  return zone;
 }
 
 // Blender previz import (render folder or video on this PC; a camera.json beside it adds the moves).
@@ -1042,6 +1082,7 @@ function providerPanel(pr) {
 
 // ------------------------------------------------------------------ boot
 (async function boot() {
+  installGlobalDrop(UI, (files) => ({ projectId: state.projectId, ...(state.dropContext?.(files) ?? defaultDrop()) }));
   const v = await GET('/api/vocab');
   state.vocab = v.vocab; state.defaults = v.default_spec;
   state.providers = await GET('/api/providers');
