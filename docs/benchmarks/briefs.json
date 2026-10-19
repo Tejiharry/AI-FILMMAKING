@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "note": "Benchmark briefs. Story content is neutral test material, not production script.",
+  "briefs": [
+    { "id": "B1", "title": "Dialogue close-up, identity", "spec": { "intent": { "summary": "A woman in her 30s says one quiet line to someone off camera", "emotion": "restrained hurt" }, "duration_s": 5, "framing": { "shot_size": "CU", "angle": "eye_level" }, "camera": { "movement": "static", "rig": "tripod" }, "lens": { "focal_mm": 85, "dof": "very_shallow" }, "subjects": [{ "ref": "@bench_actor" }], "dialogue": [{ "speaker": "@bench_actor", "line": "You could have told me." }], "audio": { "generate": true } } },
+    { "id": "B2", "title": "Push-in, Rembrandt light", "spec": { "intent": { "summary": "A man sits alone at a kitchen table at night, thinking" }, "duration_s": 6, "framing": { "shot_size": "MCU" }, "camera": { "movement": "push_in", "speed": "slow", "rig": "dolly" }, "lens": { "focal_mm": 85, "aperture": 1.8 }, "lighting": { "key_direction": "rembrandt", "contrast": "low_key", "color_temp_k": 3200, "time_of_day": "night" } } },
+    { "id": "B3", "title": "Walk-and-talk", "spec": { "intent": { "summary": "Two colleagues walk down a corridor talking, camera leading them" }, "duration_s": 8, "framing": { "shot_size": "MS" }, "camera": { "movement": "lead", "speed": "medium", "rig": "steadicam" }, "lens": { "focal_mm": 32 } } },
+    { "id": "B4", "title": "Product orbit", "spec": { "intent": { "summary": "A matte black bottle on a stone plinth, slowly orbited" }, "duration_s": 6, "framing": { "shot_size": "CU", "angle": "low" }, "camera": { "movement": "orbit", "speed": "slow", "rig": "crane" }, "lighting": { "key_direction": "back", "quality": "hard", "contrast": "low_key" }, "atmosphere": { "type": "haze" }, "subjects": [{ "ref": "@bench_product" }] } },
+    { "id": "B5", "title": "Three-shot continuity", "shots": ["B5a wide", "B5b single", "B5c reverse"], "note": "Same wardrobe/location/light across shots; chain last frame where storyboard-locked." },
+    { "id": "B6", "title": "Reference recreation", "note": "Use a 10 s, 3-cut reference clip the user owns; OG Katana → recreate." },
+    { "id": "B7", "title": "Object swap", "note": "6 s owned clip; swap one prop; measure preservation SSIM outside the prop region." }
+  ]
+}

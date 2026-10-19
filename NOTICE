@@ -1,0 +1,13 @@
+Harry AI FILM STUDIO — third-party notices
+
+MiniMax H3 (optional local provider "local-h3"; weights are not distributed with this app)
+MiniMax H3 is licensed under the MiniMax H3 Community License Agreement, Copyright © 2026 MiniMax. All Rights Reserved.
+Use is limited to the Applicable Territory defined in that licence (excludes the EU, UK, Republic of Korea and USA).
+Outputs may not be used to train or improve AI models other than MiniMax H3 (licence §V.3).
+Licence: https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+
+MiniMax H3 Character Swap LoRA by Akatz Labs (akatz-ai/MiniMax-H3-Character-Swap-LoRA), used unmodified;
+weights and workflow are downloaded by the user into the engine folder, not distributed with this app.
+
+ComfyUI (Comfy-Org/ComfyUI, GPL-3.0) is used as a separate, unmodified local engine process
+communicating over HTTP; it is downloaded by the user and not distributed with this app.

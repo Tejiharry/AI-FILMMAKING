@@ -1,0 +1,15 @@
+{
+  "name": "harry-ai-film-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Filmmaker-owned, model-independent AI production studio (zero runtime dependencies).",
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test --test-concurrency=1 tests/",
+    "test:unit": "node --test tests/unit/",
+    "test:e2e": "node --test tests/e2e/"
+  }
+}
